@@ -3,19 +3,19 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
-	"github.com/fatih/color"
 	"github.com/skratchdot/open-golang/open"
 	calendar "google.golang.org/api/calendar/v3"
+	"google.golang.org/api/option"
 )
 
 var day = 24 * time.Hour
@@ -54,7 +54,9 @@ type model struct {
 }
 
 func initModel(offset int) model {
-	date := time.Now().Truncate(day).Add(time.Duration(offset) * day)
+	now := time.Now()
+	_, tzOffset := now.Zone()
+	date := now.Add(time.Duration(tzOffset) * time.Second).Truncate(day).Add(-time.Duration(tzOffset) * time.Second).Add(time.Duration(offset) * day)
 
 	delegate := list.NewDefaultDelegate()
 	delegate.UpdateFunc = func(msg tea.Msg, m *list.Model) tea.Cmd {
@@ -87,7 +89,13 @@ func initModel(offset int) model {
 			case key.Matches(msg, appKeys.acceptEvent):
 				return tea.Batch(
 					m.StartSpinner(),
-					updateEventStatus(ev, "approved"),
+					updateEventStatus(ev, "accepted"),
+				)
+
+			case key.Matches(msg, appKeys.declineEvent):
+				return tea.Batch(
+					m.StartSpinner(),
+					updateEventStatus(ev, "declined"),
 				)
 
 			case key.Matches(msg, appKeys.openInBrowser):
@@ -198,7 +206,7 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		client, err := calendar.NewService(ctx)
+		client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
 		if err != nil {
 			log.Fatalf("Unable to retrieve Sheets client: %v", err)
 		}
@@ -206,6 +214,7 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 		for _, a := range ev.Attendees {
 			if a.Self {
 				a.ResponseStatus = status
+				ev.attendeeStatus = status
 				break
 			}
 		}
@@ -214,9 +223,10 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 			Attendees: ev.Attendees,
 		}).Do()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("%#v", err)
 		}
 
+		// TODO: handle this
 		return eventUpdatedMsg{rawEvent: rawEv}
 	}
 }
@@ -224,9 +234,9 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 func (m model) loadEvents() tea.Msg {
 	ctx := context.Background()
 
-	client, err := calendar.NewService(ctx)
+	client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
 	if err != nil {
-		log.Fatalf("Unable to retrieve Sheets client: %v", err)
+		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
 	eventsListResult, err := client.Events.List("primary").
@@ -308,7 +318,11 @@ func (e *eventItem) Title() string {
 func (e *eventItem) Description() string {
 	description := e.start.Format("15:04") + "-" + e.end.Format("15:04")
 	if len(e.conflictsWith) > 0 {
-		description = "! " + description
+		conflictNames := make([]string, len(e.conflictsWith))
+		for i := range e.conflictsWith {
+			conflictNames[i] = e.conflictsWith[i].Summary
+		}
+		description += " ! conflicts: " + strings.Join(conflictNames, ",")
 	}
 	return description
 }
@@ -333,132 +347,22 @@ var statusMarks = map[string]string{
 	"needsAction": "?",
 }
 
-var statusMarkers = map[string]string{
-	"accepted":    termenv.String("✔").Foreground(termenv.ANSIBrightGreen).String(),
-	"declined":    "✖",
-	"needsAction": termenv.String("?").Foreground(termenv.ANSIBrightYellow).String(),
-}
-
-var statusColor = map[string][]color.Attribute{
-	"accepted":    {color.FgHiBlue, color.Bold},
-	"declined":    {color.Faint},
-	"needsAction": {},
-}
+var oauthClient *http.Client
 
 func main() {
 	var offset int
 	flag.IntVar(&offset, "offset", 0, "offset number of days")
 	flag.Parse()
 
-	prog := tea.NewProgram(initModel(offset))
-	err := prog.Start()
+	var err error
+	oauthClient, err = getGoogleOAuthClient("credentials.json", []string{calendar.CalendarEventsScope})
 	if err != nil {
 		log.Fatal(err)
 	}
-}
 
-func main_() {
-	ctx := context.Background()
-
-	var offset int
-	flag.IntVar(&offset, "offset", 0, "offset number of days")
-	flag.Parse()
-
-	client, err := calendar.NewService(ctx)
+	prog := tea.NewProgram(initModel(offset))
+	err = prog.Start()
 	if err != nil {
-		log.Fatalf("Unable to retrieve Sheets client: %v", err)
+		log.Fatal(err)
 	}
-
-	targetDay := time.Now().Truncate(day).Add(time.Duration(offset) * day)
-
-	eventsListResult, err := client.Events.List("primary").
-		ShowDeleted(false).
-		SingleEvents(true).
-		TimeMin(targetDay.Format(time.RFC3339)).
-		TimeMax(targetDay.Add(1 * day).Format(time.RFC3339)).
-		OrderBy("startTime").
-		Do()
-	if err != nil {
-		log.Fatalf("%+v", err)
-	}
-
-	events := make([]*eventItem, 0, len(eventsListResult.Items))
-	for _, it := range eventsListResult.Items {
-		if it.Start.DateTime == "" || it.End.DateTime == "" {
-			continue
-		}
-
-		event := eventItem{Event: it}
-		event.start, err = time.Parse(time.RFC3339, it.Start.DateTime)
-		if err != nil {
-			log.Fatalf("%s: %v", it.Summary, err)
-		}
-		event.end, err = time.Parse(time.RFC3339, it.End.DateTime)
-		if err != nil {
-			log.Fatalf("%s: %v", it.Summary, err)
-		}
-
-		event.attendeeStatus = "unknown"
-		for _, a := range it.Attendees {
-			if a.Self {
-				event.attendeeStatus = a.ResponseStatus
-				break
-			}
-		}
-		if event.attendeeStatus == "unknown" && it.Creator.Self {
-			event.attendeeStatus = "accepted"
-		}
-
-		events = append(events, &event)
-	}
-
-	for _, ev := range events {
-		if ev.isDeclined() {
-			continue
-		}
-		for _, ev2 := range events {
-			if ev2.isDeclined() {
-				continue
-			}
-			if ev.Id == ev2.Id {
-				continue
-			}
-
-			if ev.intersectWith(ev2) {
-				ev.conflictsWith = append(ev.conflictsWith, ev2)
-			}
-		}
-	}
-
-	color.New(color.Bold, color.Underline).Printf("# %s\n", targetDay.Format("2006-01-02"))
-
-	for _, ev := range events {
-		var timeColor color.Attribute
-		if ev.attendeeStatus == "declined" {
-			timeColor = color.Faint
-		} else if len(ev.conflictsWith) > 0 {
-			timeColor = color.BgHiRed
-		}
-
-		summary := ev.Summary
-		if ev.attendeeStatus == "declined" {
-			summary = color.New(color.Faint).Sprint(summary)
-		}
-
-		fmt.Printf(
-			"%s %s %s %s\n",
-			color.New(timeColor).Sprint(ev.start.Format("15:04")+"-"+ev.end.Format("15:04")),
-			color.New(statusColor[ev.attendeeStatus]...).Sprint(statusMarks[ev.attendeeStatus]),
-			summary,
-			ev.attendeeStatus,
-		)
-	}
-
-	// TODO: コンフリクトのあるもの・未定のものから出す
-	// * View overbooks
-	//   * [A]ccept and decline other # confict(s)
-	//   * [a]ccept
-	//   * [d]ecline
-	//   * [o]pen in browser
-	// * Accept all unanswered
 }
