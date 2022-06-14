@@ -47,14 +47,14 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 
 	ev := item.(*eventItem)
 
-	mark := "?"
+	mark := "●"
 	switch ev.attendeeStatus {
 	case "accepted":
 		mark = s.Accepted.Render("✓")
 	case "declined":
 		mark = s.Declined.Render("✖")
 	case "needsAction":
-		mark = s.NeedsAction.Render("?")
+		mark = s.NeedsAction.Render("●")
 	}
 
 	timeRange := ev.start.Format("15:04") + "-" + ev.end.Format("15:04")

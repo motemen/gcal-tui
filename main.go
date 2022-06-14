@@ -84,10 +84,15 @@ var thinDotSpinner = spinner.Spinner{
 var styles = eventsListStyles{
 	DefaultItemStyles: list.NewDefaultItemStyles(),
 
-	Accepted:    lipgloss.NewStyle().Foreground(lipgloss.Color("#5DA602")),
-	Declined:    lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.AdaptiveColor{Light: "#A49FA5", Dark: "#777777"}),
-	NeedsAction: lipgloss.NewStyle().Foreground(lipgloss.Color("#CFAD00")),
-	Conflict:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CC341D")),
+	Accepted:    lipgloss.NewStyle().Foreground(lipgloss.Color("#2EAD71")),
+	Declined:    lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#777777")),
+	NeedsAction: lipgloss.NewStyle().Foreground(lipgloss.Color("#D6CF69")),
+	Conflict:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AD3252")),
+}
+
+func init() {
+	styles.DefaultItemStyles.SelectedTitle.
+		Foreground(lipgloss.Color("#50CFFA")).BorderLeftForeground(lipgloss.Color("#50CFFA"))
 }
 
 func today() time.Time {
@@ -105,6 +110,7 @@ func initModel(offset int) model {
 	}
 
 	eventsList := list.New(nil, delegate, 0, 0)
+	eventsList.Styles.Title.Background(lipgloss.Color("#50CFFA"))
 	eventsList.Title = date.Format("2006-01-02")
 	eventsList.SetSpinner(thinDotSpinner)
 	eventsList.SetShowStatusBar(false)
