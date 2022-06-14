@@ -5,15 +5,18 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"strings"
+	"os"
 	"time"
+
+	"github.com/motemen/go-nuts/oauth2util"
+	"golang.org/x/oauth2/google"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/skratchdot/open-golang/open"
 	calendar "google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
@@ -25,6 +28,10 @@ type appKeyMap struct {
 	acceptEvent   key.Binding
 	declineEvent  key.Binding
 	openInBrowser key.Binding
+	gotoToday     key.Binding
+	reload        key.Binding
+	nextDay       key.Binding
+	prevDay       key.Binding
 }
 
 var appKeys = &appKeyMap{
@@ -44,6 +51,22 @@ var appKeys = &appKeyMap{
 		key.WithKeys("o"),
 		key.WithHelp("o", "open in browser"),
 	),
+	gotoToday: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "today"),
+	),
+	reload: key.NewBinding(
+		key.WithKeys("R"),
+		key.WithHelp("R", "reload"),
+	),
+	nextDay: key.NewBinding(
+		key.WithKeys("right"),
+		key.WithHelp("right", "next day"),
+	),
+	prevDay: key.NewBinding(
+		key.WithKeys("left"),
+		key.WithHelp("left", "prev day"),
+	),
 }
 
 type model struct {
@@ -53,63 +76,37 @@ type model struct {
 	eventsList list.Model
 }
 
-func initModel(offset int) model {
+var thinDotSpinner = spinner.Spinner{
+	Frames: []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"},
+	FPS:    time.Second / 10,
+}
+
+var styles = eventsListStyles{
+	DefaultItemStyles: list.NewDefaultItemStyles(),
+
+	Accepted:    lipgloss.NewStyle().Foreground(lipgloss.Color("#5DA602")),
+	Declined:    lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.AdaptiveColor{Light: "#A49FA5", Dark: "#777777"}),
+	NeedsAction: lipgloss.NewStyle().Foreground(lipgloss.Color("#CFAD00")),
+	Conflict:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CC341D")),
+}
+
+func today() time.Time {
 	now := time.Now()
 	_, tzOffset := now.Zone()
-	date := now.Add(time.Duration(tzOffset) * time.Second).Truncate(day).Add(-time.Duration(tzOffset) * time.Second).Add(time.Duration(offset) * day)
+	date := now.Add(time.Duration(tzOffset) * time.Second).Truncate(day).Add(-time.Duration(tzOffset) * time.Second)
+	return date
+}
 
-	delegate := list.NewDefaultDelegate()
-	delegate.UpdateFunc = func(msg tea.Msg, m *list.Model) tea.Cmd {
-		ev, ok := m.SelectedItem().(*eventItem)
-		if !ok {
-			return nil
-		}
+func initModel(offset int) model {
+	date := today().Add(time.Duration(offset) * day)
 
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch {
-			case key.Matches(msg, appKeys.nextEvent):
-				// focus next interesting event
-				items := m.Items()
-				events := make([]*eventItem, len(items))
-				for i, it := range items {
-					events[i] = it.(*eventItem)
-				}
-
-				i := m.Index()
-				for j := i + 1; j < i+len(events); j++ {
-					ev := events[j%len(events)]
-					if ev.attendeeStatus == "needsAction" || len(ev.conflictsWith) > 0 {
-						m.Select(j % len(events))
-						break
-					}
-				}
-				return nil
-
-			case key.Matches(msg, appKeys.acceptEvent):
-				return tea.Batch(
-					m.StartSpinner(),
-					updateEventStatus(ev, "accepted"),
-				)
-
-			case key.Matches(msg, appKeys.declineEvent):
-				return tea.Batch(
-					m.StartSpinner(),
-					updateEventStatus(ev, "declined"),
-				)
-
-			case key.Matches(msg, appKeys.openInBrowser):
-				open.Start(ev.HtmlLink)
-				return m.NewStatusMessage("open " + ev.Summary)
-			}
-		}
-
-		return nil
+	delegate := &eventsListDelegate{
+		Styles: styles,
 	}
 
 	eventsList := list.New(nil, delegate, 0, 0)
 	eventsList.Title = date.Format("2006-01-02")
-	// eventsList.SetSpinner(spinner.Dot) // requires padding left value of 3
+	eventsList.SetSpinner(thinDotSpinner)
 	eventsList.SetShowStatusBar(false)
 	eventsList.StartSpinner() // required here
 	eventsList.AdditionalShortHelpKeys = func() []key.Binding {
@@ -118,6 +115,8 @@ func initModel(offset int) model {
 			appKeys.acceptEvent,
 			appKeys.declineEvent,
 			appKeys.openInBrowser,
+			appKeys.nextDay,
+			appKeys.prevDay,
 		}
 	}
 
@@ -125,6 +124,16 @@ func initModel(offset int) model {
 		date:       date,
 		eventsList: eventsList,
 	}
+}
+
+func (m model) reloadEvents(date time.Time) (model, tea.Cmd) {
+	m.date = date
+	m.eventsList.Title = m.date.Format("2006-01-02")
+	return m, tea.Batch(
+		m.eventsList.StartSpinner(),
+		m.eventsList.SetItems(nil),
+		m.loadEvents,
+	)
 }
 
 func (m model) Init() tea.Cmd {
@@ -164,6 +173,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		}
+
+		switch {
+		case key.Matches(msg, appKeys.gotoToday):
+			return m.reloadEvents(today())
+
+		case key.Matches(msg, appKeys.reload):
+			return m.reloadEvents(m.date)
+
+		case key.Matches(msg, appKeys.nextDay):
+			return m.reloadEvents(m.date.Add(1 * day))
+
+		case key.Matches(msg, appKeys.prevDay):
+			return m.reloadEvents(m.date.Add(-1 * day))
+		}
 	}
 
 	var cmd tea.Cmd
@@ -176,9 +199,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	s := ""
-	s += appStyle.Render(m.eventsList.View())
-	return s
+	return appStyle.Render(m.eventsList.View())
 }
 
 type eventsLoadedMsg struct {
@@ -311,27 +332,9 @@ type eventItem struct {
 	conflictsWith  []*eventItem
 }
 
-func (e *eventItem) Title() string {
-	return statusMarks[e.attendeeStatus] + " " + e.Summary
-}
-
-func (e *eventItem) Description() string {
-	description := e.start.Format("15:04") + "-" + e.end.Format("15:04")
-	if len(e.conflictsWith) > 0 {
-		conflictNames := make([]string, len(e.conflictsWith))
-		for i := range e.conflictsWith {
-			conflictNames[i] = e.conflictsWith[i].Summary
-		}
-		description += " ! conflicts: " + strings.Join(conflictNames, ",")
-	}
-	return description
-}
-
 func (e *eventItem) FilterValue() string {
 	return e.Summary
 }
-
-var _ list.DefaultItem = (*eventItem)(nil)
 
 func (e *eventItem) intersectWith(e2 *eventItem) bool {
 	return !(e.end.Unix() <= e2.start.Unix() || e2.end.Unix() <= e.start.Unix())
@@ -341,21 +344,29 @@ func (e *eventItem) isDeclined() bool {
 	return e.attendeeStatus == "declined"
 }
 
-var statusMarks = map[string]string{
-	"accepted":    "✔",
-	"declined":    "✖",
-	"needsAction": "?",
-}
-
 var oauthClient *http.Client
 
 func main() {
 	var offset int
+	var credentials string
 	flag.IntVar(&offset, "offset", 0, "offset number of days")
+	flag.StringVar(&credentials, "credentials", "credentials.json", "`path` to credentials.json")
 	flag.Parse()
 
-	var err error
-	oauthClient, err = getGoogleOAuthClient("credentials.json", []string{calendar.CalendarEventsScope})
+	b, err := os.ReadFile(credentials)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	oauth2Config, err := google.ConfigFromJSON(b, calendar.CalendarEventsScope)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	oauthClient, err = (&oauth2util.Config{
+		OAuth2Config: oauth2Config,
+		Name:         "tui-gcal",
+	}).CreateOAuth2Client(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
