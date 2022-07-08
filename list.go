@@ -11,11 +11,6 @@ import (
 	"github.com/skratchdot/open-golang/open"
 )
 
-const (
-	bullet   = "•"
-	ellipsis = "…"
-)
-
 type eventsListStyles struct {
 	list.DefaultItemStyles
 	Accepted    lipgloss.Style
@@ -53,7 +48,7 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 		mark = s.Accepted.Render("✓")
 	case "declined":
 		mark = s.Declined.Render("✖")
-	case "needsAction":
+	case "needsAction", "tentative":
 		mark = s.NeedsAction.Render("●")
 	}
 
@@ -72,18 +67,6 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 		// short-circuit
 		return
 	}
-
-	// Prevent text from exceeding list width
-	// textwidth := uint(m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight())
-	// title = truncate.StringWithTail(title, textwidth, ellipsis)
-	// var lines []string
-	// for i, line := range strings.Split(desc, "\n") {
-	// 	if i >= 1 /* height-1 */ {
-	// 		break
-	// 	}
-	// 	lines = append(lines, truncate.StringWithTail(line, textwidth, ellipsis))
-	// }
-	// desc = strings.Join(lines, "\n")
 
 	// Conditions
 	var (
@@ -173,7 +156,7 @@ func (*eventsListDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 			i := m.Index()
 			for j := i + 1; j < i+len(events); j++ {
 				ev := events[j%len(events)]
-				if ev.attendeeStatus == "needsAction" || len(ev.conflictsWith) > 0 {
+				if ev.attendeeStatus == "needsAction" || ev.attendeeStatus == "tentative" || len(ev.conflictsWith) > 0 {
 					m.Select(j % len(events))
 					break
 				}
@@ -194,7 +177,7 @@ func (*eventsListDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 
 		case key.Matches(msg, appKeys.openInBrowser):
 			open.Start(ev.HtmlLink)
-			return m.NewStatusMessage("open " + ev.Summary)
+			return m.NewStatusMessage("open " + ev.Summary + " in browser")
 		}
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -32,12 +33,27 @@ type appKeyMap struct {
 	reload        key.Binding
 	nextDay       key.Binding
 	prevDay       key.Binding
+	jumpToDay     key.Binding
+}
+
+func (a appKeyMap) helpKeys() []key.Binding {
+	return []key.Binding{
+		a.nextEvent,
+		a.acceptEvent,
+		a.declineEvent,
+		a.openInBrowser,
+		a.gotoToday,
+		a.reload,
+		a.nextDay,
+		a.prevDay,
+		a.jumpToDay,
+	}
 }
 
 var appKeys = &appKeyMap{
 	nextEvent: key.NewBinding(
 		key.WithKeys("tab"),
-		key.WithHelp("tab", "next interesting"),
+		key.WithHelp("tab", "next todo"),
 	),
 	acceptEvent: key.NewBinding(
 		key.WithKeys("A"),
@@ -61,11 +77,15 @@ var appKeys = &appKeyMap{
 	),
 	nextDay: key.NewBinding(
 		key.WithKeys("right"),
-		key.WithHelp("right", "next day"),
+		key.WithHelp("→", "next day"),
 	),
 	prevDay: key.NewBinding(
 		key.WithKeys("left"),
-		key.WithHelp("left", "prev day"),
+		key.WithHelp("←", "prev day"),
+	),
+	jumpToDay: key.NewBinding(
+		key.WithKeys("ctrl+t"),
+		key.WithHelp("ctrl+t", "jump to day"),
 	),
 }
 
@@ -73,8 +93,23 @@ type model struct {
 	date   time.Time
 	events []*eventItem
 
+	// Default view
 	eventsList list.Model
+
+	// Day view
+	inputDate textinput.Model
+
+	uiMode uiMode
+
+	errorMessage string
 }
+
+type uiMode int
+
+const (
+	uiModeDefault uiMode = iota
+	uiModeInputDate
+)
 
 var thinDotSpinner = spinner.Spinner{
 	Frames: []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"},
@@ -115,20 +150,20 @@ func initModel(offset int) model {
 	eventsList.SetSpinner(thinDotSpinner)
 	eventsList.SetShowStatusBar(false)
 	eventsList.StartSpinner() // required here
-	eventsList.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			appKeys.nextEvent,
-			appKeys.acceptEvent,
-			appKeys.declineEvent,
-			appKeys.openInBrowser,
-			appKeys.nextDay,
-			appKeys.prevDay,
-		}
-	}
+	eventsList.AdditionalShortHelpKeys = appKeys.helpKeys
+	eventsList.AdditionalFullHelpKeys = appKeys.helpKeys
+	eventsList.KeyMap.Filter.Unbind()
+
+	t := textinput.New()
+	t.Placeholder = "YYYY-MM-DD"
+	t.Focus()
+	t.CharLimit = 10
+	t.Width = 15
 
 	return model{
 		date:       date,
 		eventsList: eventsList,
+		inputDate:  t,
 	}
 }
 
@@ -140,6 +175,13 @@ func (m model) reloadEvents(date time.Time) (model, tea.Cmd) {
 		m.eventsList.SetItems(nil),
 		m.loadEvents,
 	)
+}
+
+func (m model) enterJumpToDayMode() (model, tea.Cmd) {
+	m.errorMessage = ""
+	m.uiMode = uiModeInputDate
+	m.inputDate.SetValue(m.date.Format("2006-01-02"))
+	return m, textinput.Blink
 }
 
 func (m model) Init() tea.Cmd {
@@ -170,41 +212,81 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventUpdatedMsg:
 		m.eventsList.StopSpinner()
 
+	case nonFatalErrorMsg:
+		m.errorMessage = msg.errorMessage
+
 	case tea.WindowSizeMsg:
 		h, v := appStyle.GetFrameSize()
 		m.eventsList.SetSize(msg.Width-h, msg.Height-v)
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		}
+		switch m.uiMode {
+		case uiModeDefault:
+			model, cmd := m.handleDefaultModeKeyMsg(msg)
+			if cmd != nil {
+				return model, cmd
+			}
 
-		switch {
-		case key.Matches(msg, appKeys.gotoToday):
-			return m.reloadEvents(today())
-
-		case key.Matches(msg, appKeys.reload):
-			return m.reloadEvents(m.date)
-
-		case key.Matches(msg, appKeys.nextDay):
-			return m.reloadEvents(m.date.Add(1 * day))
-
-		case key.Matches(msg, appKeys.prevDay):
-			return m.reloadEvents(m.date.Add(-1 * day))
+		case uiModeInputDate:
+			if msg.String() == "enter" {
+				date, err := time.Parse("2006-01-02", m.inputDate.Value())
+				if err != nil {
+					m.errorMessage = err.Error()
+				} else {
+					m.uiMode = uiModeDefault
+					return m.reloadEvents(date)
+				}
+			}
 		}
 	}
 
 	var cmd tea.Cmd
 
-	// m.eventsList.StartSpinner()
-	m.eventsList, cmd = m.eventsList.Update(msg)
-	cmds = append(cmds, cmd)
+	switch m.uiMode {
+	case uiModeDefault:
+		// m.eventsList.StartSpinner()
+		m.eventsList, cmd = m.eventsList.Update(msg)
+		cmds = append(cmds, cmd)
+
+	case uiModeInputDate:
+		m.inputDate, cmd = m.inputDate.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 
 	return m, tea.Batch(cmds...)
 }
 
+func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	}
+
+	switch {
+	case key.Matches(msg, appKeys.gotoToday):
+		return m.reloadEvents(today())
+
+	case key.Matches(msg, appKeys.reload):
+		return m.reloadEvents(m.date)
+
+	case key.Matches(msg, appKeys.nextDay):
+		return m.reloadEvents(m.date.Add(+1 * day))
+
+	case key.Matches(msg, appKeys.prevDay):
+		return m.reloadEvents(m.date.Add(-1 * day))
+
+	case key.Matches(msg, appKeys.jumpToDay):
+		return m.enterJumpToDayMode()
+	}
+
+	return m, nil
+}
+
 func (m model) View() string {
+	if m.uiMode == uiModeInputDate {
+		return appStyle.Render("Date: " + m.inputDate.View())
+	}
+
 	return appStyle.Render(m.eventsList.View())
 }
 
@@ -214,6 +296,10 @@ type eventsLoadedMsg struct {
 
 type eventUpdatedMsg struct {
 	rawEvent *calendar.Event
+}
+
+type nonFatalErrorMsg struct {
+	errorMessage string
 }
 
 func (m model) _loadEvents() tea.Msg {
