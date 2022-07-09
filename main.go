@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/motemen/go-nuts/oauth2util"
@@ -21,6 +22,8 @@ import (
 	calendar "google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
+
+const programName = "gcal-tui"
 
 var day = 24 * time.Hour
 
@@ -137,8 +140,8 @@ func today() time.Time {
 	return date
 }
 
-func initModel(offset int) model {
-	date := today().Add(time.Duration(offset) * day)
+func initModel() model {
+	date := today()
 
 	delegate := &eventsListDelegate{
 		Styles: styles,
@@ -302,19 +305,6 @@ type nonFatalErrorMsg struct {
 	errorMessage string
 }
 
-func (m model) _loadEvents() tea.Msg {
-	time.Sleep(3 * time.Second)
-	return eventsLoadedMsg{
-		events: []*eventItem{
-			{
-				Event: &calendar.Event{
-					Summary: "test",
-				},
-			},
-		},
-	}
-}
-
 func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -339,7 +329,6 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 			log.Fatalf("%#v", err)
 		}
 
-		// TODO: handle this
 		return eventUpdatedMsg{rawEvent: rawEv}
 	}
 }
@@ -439,13 +428,16 @@ func (e *eventItem) isDeclined() bool {
 var oauthClient *http.Client
 
 func main() {
-	var offset int
-	var credentials string
-	flag.IntVar(&offset, "offset", 0, "offset number of days")
-	flag.StringVar(&credentials, "credentials", "credentials.json", "`path` to credentials.json")
+	confDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
+	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.Parse()
 
-	b, err := os.ReadFile(credentials)
+	b, err := os.ReadFile(credentialsFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -457,13 +449,13 @@ func main() {
 
 	oauthClient, err = (&oauth2util.Config{
 		OAuth2Config: oauth2Config,
-		Name:         "tui-gcal",
+		Name:         programName,
 	}).CreateOAuth2Client(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	prog := tea.NewProgram(initModel(offset))
+	prog := tea.NewProgram(initModel())
 	err = prog.Start()
 	if err != nil {
 		log.Fatal(err)

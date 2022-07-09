@@ -1,4 +1,4 @@
-module github.com/motemen/cli-gcal-overbooks
+module github.com/motemen/gcal-tui
 
 go 1.18
 
