@@ -439,7 +439,8 @@ func main() {
 
 	b, err := os.ReadFile(credentialsFile)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		log.Fatal("Unable to read credentials file -- check README.md to get started.")
 	}
 
 	oauth2Config, err := google.ConfigFromJSON(b, calendar.CalendarEventsScope)
