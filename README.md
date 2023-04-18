@@ -8,6 +8,8 @@ A terminal UI client for Google Calendar.
 Preparation
 -----------
 
+Compile with `go build` and run with `./gcal-tui`.
+
 gcal-tui interfaces directly with Google's Calendar API. You will be defining your own application to which you will authorize yourself.
 
 1. Go to https://console.cloud.google.com/ and either select an existing project or create a new one (e.g "personal-stuff"), then select it.
