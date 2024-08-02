@@ -28,15 +28,16 @@ const programName = "gcal-tui"
 var day = 24 * time.Hour
 
 type appKeyMap struct {
-	nextEvent     key.Binding
-	acceptEvent   key.Binding
-	declineEvent  key.Binding
-	openInBrowser key.Binding
-	gotoToday     key.Binding
-	reload        key.Binding
-	nextDay       key.Binding
-	prevDay       key.Binding
-	jumpToDay     key.Binding
+	nextEvent      key.Binding
+	acceptEvent    key.Binding
+	declineEvent   key.Binding
+	addNoteToEvent key.Binding
+	openInBrowser  key.Binding
+	gotoToday      key.Binding
+	reload         key.Binding
+	nextDay        key.Binding
+	prevDay        key.Binding
+	jumpToDay      key.Binding
 }
 
 func (a appKeyMap) helpKeys() []key.Binding {
@@ -44,6 +45,7 @@ func (a appKeyMap) helpKeys() []key.Binding {
 		a.nextEvent,
 		a.acceptEvent,
 		a.declineEvent,
+		a.addNoteToEvent,
 		a.openInBrowser,
 		a.gotoToday,
 		a.reload,
@@ -65,6 +67,10 @@ var appKeys = &appKeyMap{
 	declineEvent: key.NewBinding(
 		key.WithKeys("D"),
 		key.WithHelp("D", "decline event"),
+	),
+	addNoteToEvent: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "add note to event"),
 	),
 	openInBrowser: key.NewBinding(
 		key.WithKeys("o"),
@@ -102,6 +108,10 @@ type model struct {
 	// Day view
 	inputDate textinput.Model
 
+	// Note view
+	inputNote            textinput.Model
+	inputNoteTargetEvent *eventItem
+
 	uiMode uiMode
 
 	errorMessage string
@@ -112,6 +122,7 @@ type uiMode int
 const (
 	uiModeDefault uiMode = iota
 	uiModeInputDate
+	uiModeInputNote
 )
 
 var thinDotSpinner = spinner.Spinner{
@@ -157,16 +168,22 @@ func initModel() model {
 	eventsList.AdditionalFullHelpKeys = appKeys.helpKeys
 	eventsList.KeyMap.Filter.Unbind()
 
-	t := textinput.New()
-	t.Placeholder = "YYYY-MM-DD"
-	t.Focus()
-	t.CharLimit = 10
-	t.Width = 15
+	dateTextInput := textinput.New()
+	dateTextInput.Placeholder = "YYYY-MM-DD"
+	dateTextInput.Focus()
+	dateTextInput.CharLimit = 10
+	dateTextInput.Width = 15
+
+	noteTextInput := textinput.New()
+	noteTextInput.Placeholder = "note..."
+	noteTextInput.Focus()
+	noteTextInput.Width = 15
 
 	return model{
 		date:       date,
 		eventsList: eventsList,
-		inputDate:  t,
+		inputDate:  dateTextInput,
+		inputNote:  noteTextInput,
 	}
 }
 
@@ -184,6 +201,14 @@ func (m model) enterJumpToDayMode() (model, tea.Cmd) {
 	m.errorMessage = ""
 	m.uiMode = uiModeInputDate
 	m.inputDate.SetValue(m.date.Format("2006-01-02"))
+	return m, textinput.Blink
+}
+
+func (m model) enterInputNoteMode(ev *eventItem) (model, tea.Cmd) {
+	m.errorMessage = ""
+	m.uiMode = uiModeInputNote
+	m.inputNoteTargetEvent = ev
+	m.inputNote.SetValue(ev.attendeeNote)
 	return m, textinput.Blink
 }
 
@@ -280,6 +305,11 @@ func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, appKeys.jumpToDay):
 		return m.enterJumpToDayMode()
+
+	case key.Matches(msg, appKeys.addNoteToEvent):
+		ev := m.eventsList.SelectedItem().(*eventItem)
+		return m.enterInputNoteMode(ev)
+
 	}
 
 	return m, nil
@@ -288,6 +318,10 @@ func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.uiMode == uiModeInputDate {
 		return appStyle.Render("Date: " + m.inputDate.View())
+	}
+
+	if m.uiMode == uiModeInputNote {
+		return appStyle.Render("Note: " + m.inputNote.View())
 	}
 
 	return appStyle.Render(m.eventsList.View())
@@ -311,13 +345,45 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 
 		client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
 		if err != nil {
-			log.Fatalf("Unable to retrieve Sheets client: %v", err)
+			log.Fatalf("Unable to retrieve calendar client: %v", err)
 		}
 
 		for _, a := range ev.Attendees {
 			if a.Self {
 				a.ResponseStatus = status
 				ev.attendeeStatus = status
+				break
+			}
+		}
+
+		rawEv, err := client.Events.Patch("primary", ev.Id, &calendar.Event{
+			Attendees: ev.Attendees,
+		}).Do()
+		if err != nil {
+			log.Fatalf("%#v", err)
+		}
+
+		return eventUpdatedMsg{rawEvent: rawEv}
+	}
+}
+
+func updateEventNote(ev *eventItem, note string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
+		if err != nil {
+			log.Fatalf("Unable to retrieve calendar client: %v", err)
+		}
+
+		for _, a := range ev.Attendees {
+			if a.Self {
+				if note == "" {
+					a.NullFields = []string{"Comment"}
+				} else {
+					a.Comment = note
+				}
+				ev.attendeeNote = note
 				break
 			}
 		}
@@ -372,6 +438,7 @@ func (m model) loadEvents() tea.Msg {
 		for _, a := range it.Attendees {
 			if a.Self {
 				event.attendeeStatus = a.ResponseStatus
+				event.attendeeNote = a.Comment
 				break
 			}
 		}
@@ -410,6 +477,7 @@ type eventItem struct {
 	start          time.Time
 	end            time.Time
 	attendeeStatus string
+	attendeeNote   string
 	conflictsWith  []*eventItem
 }
 
