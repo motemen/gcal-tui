@@ -489,7 +489,6 @@ func main() {
 	}
 }
 
-// テンプレート出力用関数
 func printEventsWithTemplate(formatStr string) error {
 	events, err := fetchTodayEvents()
 	if err != nil {
@@ -507,7 +506,6 @@ func printEventsWithTemplate(formatStr string) error {
 		return fmt.Errorf("template parse error: %w", err)
 	}
 
-	// []eventItem を渡す
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, events)
 	if err != nil {
@@ -517,14 +515,16 @@ func printEventsWithTemplate(formatStr string) error {
 	return nil
 }
 
-// 今日のイベントを取得
 func fetchTodayEvents() ([]*eventItem, error) {
+	return fetchEventsForDate(today())
+}
+
+func fetchEventsForDate(date time.Time) ([]*eventItem, error) {
 	ctx := context.Background()
 	client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
 	if err != nil {
 		return nil, err
 	}
-	date := today()
 	eventsListResult, err := client.Events.List("primary").
 		ShowDeleted(false).
 		SingleEvents(true).
@@ -560,6 +560,24 @@ func fetchTodayEvents() ([]*eventItem, error) {
 			event.AttendeeStatus = "accepted"
 		}
 		events = append(events, &event)
+	}
+
+	// Detect conflicts
+	for _, ev := range events {
+		if ev.IsDeclined() {
+			continue
+		}
+		for _, ev2 := range events {
+			if ev2.IsDeclined() {
+				continue
+			}
+			if ev.Id == ev2.Id {
+				continue
+			}
+			if ev.intersectWith(ev2) {
+				ev.ConflictsWith = append(ev.ConflictsWith, ev2)
+			}
+		}
 	}
 	return events, nil
 }
