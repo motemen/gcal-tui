@@ -26,7 +26,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-// printEventsWithTemplate: 指定日付のイベントをテンプレートで出力
+// printEventsWithTemplate: Output events for the specified date using a template
 func printEventsWithTemplate(formatStr string, date time.Time) error {
 	events, err := fetchEventsForDate(date)
 	if err != nil {
@@ -473,7 +473,7 @@ func parseDateArg(arg string, base time.Time) (time.Time, error) {
 		return base, nil
 	}
 	if arg[0] == '+' || arg[0] == '-' {
-		// 相対日付: +1d, -2d
+		// Relative date: +1d, -2d
 		var sign int
 		if arg[0] == '+' {
 			sign = 1
@@ -493,7 +493,7 @@ func parseDateArg(arg string, base time.Time) (time.Time, error) {
 			return base, fmt.Errorf("unsupported unit: %s", unit)
 		}
 	}
-	// 絶対日付: YYYY-mm-dd
+	// Absolute date: YYYY-mm-dd
 	t, err := time.Parse("2006-01-02", arg)
 	if err != nil {
 		return base, fmt.Errorf("invalid date: %s", arg)
@@ -534,7 +534,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 日付の決定
+	// Determine the date
 	base := today()
 	showDate, err := parseDateArg(dateStr, base)
 	if err != nil {
@@ -542,7 +542,7 @@ func main() {
 	}
 
 	if formatStr != "" {
-		// 非インタラクティブ: テンプレート出力
+		// Non-interactive: Template output
 		err := printEventsWithTemplate(formatStr, showDate)
 		if err != nil {
 			log.Fatal(err)
