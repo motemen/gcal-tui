@@ -26,6 +26,34 @@ import (
 	"google.golang.org/api/option"
 )
 
+// printEventsWithTemplate: 指定日付のイベントをテンプレートで出力
+func printEventsWithTemplate(formatStr string, date time.Time) error {
+	events, err := fetchEventsForDate(date)
+	if err != nil {
+		return err
+	}
+
+	funcMap := template.FuncMap{
+		"formatTime": func(t time.Time, layout string) string {
+			return t.Format(layout)
+		},
+	}
+
+	tmpl, err := template.New("events").Funcs(funcMap).Parse(formatStr)
+	if err != nil {
+		return fmt.Errorf("template parse error: %w", err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, events)
+	if err != nil {
+		return fmt.Errorf("template execute error: %w", err)
+	}
+
+	fmt.Print(buf.String())
+	return nil
+}
+
 const programName = "gcal-tui"
 
 var day = 24 * time.Hour
@@ -143,9 +171,7 @@ func today() time.Time {
 	return date
 }
 
-func initModel() model {
-	date := today()
-
+func initModelWithDate(date time.Time) model {
 	delegate := &eventsListDelegate{
 		Styles: styles,
 	}
@@ -442,6 +468,39 @@ func (e *eventItem) String() string {
 
 var oauthClient *http.Client
 
+func parseDateArg(arg string, base time.Time) (time.Time, error) {
+	if arg == "" {
+		return base, nil
+	}
+	if arg[0] == '+' || arg[0] == '-' {
+		// 相対日付: +1d, -2d
+		var sign int
+		if arg[0] == '+' {
+			sign = 1
+		} else {
+			sign = -1
+		}
+		var n int
+		var unit string
+		_, err := fmt.Sscanf(arg, "%d%s", &n, &unit)
+		if err != nil {
+			return base, fmt.Errorf("invalid relative date: %s", arg)
+		}
+		switch unit {
+		case "d":
+			return base.Add(time.Duration(sign*n) * day), nil
+		default:
+			return base, fmt.Errorf("unsupported unit: %s", unit)
+		}
+	}
+	// 絶対日付: YYYY-mm-dd
+	t, err := time.Parse("2006-01-02", arg)
+	if err != nil {
+		return base, fmt.Errorf("invalid date: %s", arg)
+	}
+	return t, nil
+}
+
 func main() {
 	confDir, err := os.UserConfigDir()
 	if err != nil {
@@ -450,8 +509,10 @@ func main() {
 
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
+	dateStr := ""
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
+	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -473,46 +534,27 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// 日付の決定
+	base := today()
+	showDate, err := parseDateArg(dateStr, base)
+	if err != nil {
+		log.Fatalf("invalid --date: %v", err)
+	}
+
 	if formatStr != "" {
 		// 非インタラクティブ: テンプレート出力
-		err := printEventsWithTemplate(formatStr)
+		err := printEventsWithTemplate(formatStr, showDate)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 
-	prog := tea.NewProgram(initModel())
+	prog := tea.NewProgram(initModelWithDate(showDate))
 	err = prog.Start()
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func printEventsWithTemplate(formatStr string) error {
-	events, err := fetchTodayEvents()
-	if err != nil {
-		return err
-	}
-
-	funcMap := template.FuncMap{
-		"formatTime": func(t time.Time, layout string) string {
-			return t.Format(layout)
-		},
-	}
-
-	tmpl, err := template.New("events").Funcs(funcMap).Parse(formatStr)
-	if err != nil {
-		return fmt.Errorf("template parse error: %w", err)
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, events)
-	if err != nil {
-		return fmt.Errorf("template execute error: %w", err)
-	}
-	fmt.Print(buf.String())
-	return nil
 }
 
 func fetchTodayEvents() ([]*eventItem, error) {
