@@ -412,18 +412,18 @@ func (m model) loadEvents() tea.Msg {
 	}
 
 	for _, ev := range events {
-		if ev.IsDeclined() {
+		if ev.Declined() {
 			continue
 		}
 		for _, ev2 := range events {
-			if ev2.IsDeclined() {
+			if ev2.Declined() {
 				continue
 			}
 			if ev.Id == ev2.Id {
 				continue
 			}
 
-			if ev.intersectWith(ev2) {
+			if ev.intersectsWith(ev2) {
 				ev.ConflictsWith = append(ev.ConflictsWith, ev2)
 			}
 		}
@@ -446,15 +446,15 @@ func (e *eventItem) FilterValue() string {
 	return e.Summary
 }
 
-func (e *eventItem) intersectWith(e2 *eventItem) bool {
+func (e *eventItem) intersectsWith(e2 *eventItem) bool {
 	return !(e.End.Unix() <= e2.Start.Unix() || e2.End.Unix() <= e.Start.Unix())
 }
 
-func (e *eventItem) IsAccepted() bool {
+func (e *eventItem) Accepted() bool {
 	return e.AttendeeStatus == "accepted"
 }
 
-func (e *eventItem) IsDeclined() bool {
+func (e *eventItem) Declined() bool {
 	return e.AttendeeStatus == "declined"
 }
 
@@ -606,17 +606,17 @@ func fetchEventsForDate(date time.Time) ([]*eventItem, error) {
 
 	// Detect conflicts
 	for _, ev := range events {
-		if ev.IsDeclined() {
+		if ev.Declined() {
 			continue
 		}
 		for _, ev2 := range events {
-			if ev2.IsDeclined() {
+			if ev2.Declined() {
 				continue
 			}
 			if ev.Id == ev2.Id {
 				continue
 			}
-			if ev.intersectWith(ev2) {
+			if ev.intersectsWith(ev2) {
 				ev.ConflictsWith = append(ev.ConflictsWith, ev2)
 			}
 		}
