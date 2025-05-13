@@ -43,7 +43,7 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 	ev := item.(*eventItem)
 
 	mark := "●"
-	switch ev.attendeeStatus {
+	switch ev.AttendeeStatus {
 	case "accepted":
 		mark = s.Accepted.Render("✓")
 	case "declined":
@@ -52,12 +52,12 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 		mark = s.NeedsAction.Render("●")
 	}
 
-	timeRange := ev.start.Format("15:04") + "-" + ev.end.Format("15:04")
+	timeRange := ev.Start.Format("15:04") + "-" + ev.End.Format("15:04")
 
 	conflicts := ""
-	conflictNames := make([]string, len(ev.conflictsWith))
-	for i := range ev.conflictsWith {
-		conflictNames[i] = ev.conflictsWith[i].Summary
+	conflictNames := make([]string, len(ev.ConflictsWith))
+	for i := range ev.ConflictsWith {
+		conflictNames[i] = ev.ConflictsWith[i].Summary
 	}
 	if len(conflictNames) > 0 {
 		conflicts = "!"
@@ -105,14 +105,14 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 			title = s.NormalTitle.Render(mark + " " + title)
 		} else {
 			isConflicting := false
-			for _, c := range selectedEvent.conflictsWith {
+			for _, c := range selectedEvent.ConflictsWith {
 				if ev.Id == c.Id {
 					isConflicting = true
 					break
 				}
 			}
 			// title = s.NormalTitle.Render(mark + " " + s.NormalTitle.Copy().Border(lipgloss.Border{}).Padding(0).Render(ev.Summary))
-			if ev.attendeeStatus == "declined" {
+			if ev.AttendeeStatus == "declined" {
 				title = s.NormalTitle.Render(mark + " " + s.Declined.Inline(true).Render(ev.Summary))
 			} else {
 				title = s.NormalTitle.Render(mark + " " + s.NormalTitle.Inline(true).Render(ev.Summary))
@@ -156,7 +156,7 @@ func (*eventsListDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 			i := m.Index()
 			for j := i + 1; j < i+len(events); j++ {
 				ev := events[j%len(events)]
-				if ev.attendeeStatus == "needsAction" || ev.attendeeStatus == "tentative" || len(ev.conflictsWith) > 0 {
+				if ev.AttendeeStatus == "needsAction" || ev.AttendeeStatus == "tentative" || len(ev.ConflictsWith) > 0 {
 					m.Select(j % len(events))
 					break
 				}

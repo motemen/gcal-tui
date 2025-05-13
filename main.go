@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"text/template"
 	"time"
 
 	"github.com/motemen/go-nuts/oauth2util"
@@ -22,6 +25,34 @@ import (
 	calendar "google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
+
+// printEventsWithTemplate: Output events for the specified date using a template
+func printEventsWithTemplate(formatStr string, date time.Time) error {
+	events, err := fetchEventsForDate(date)
+	if err != nil {
+		return err
+	}
+
+	funcMap := template.FuncMap{
+		"formatTime": func(t time.Time, layout string) string {
+			return t.Format(layout)
+		},
+	}
+
+	tmpl, err := template.New("events").Funcs(funcMap).Parse(formatStr)
+	if err != nil {
+		return fmt.Errorf("template parse error: %w", err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, events)
+	if err != nil {
+		return fmt.Errorf("template execute error: %w", err)
+	}
+
+	fmt.Print(buf.String())
+	return nil
+}
 
 const programName = "gcal-tui"
 
@@ -140,9 +171,7 @@ func today() time.Time {
 	return date
 }
 
-func initModel() model {
-	date := today()
-
+func initModelWithDate(date time.Time) model {
 	delegate := &eventsListDelegate{
 		Styles: styles,
 	}
@@ -317,7 +346,7 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 		for _, a := range ev.Attendees {
 			if a.Self {
 				a.ResponseStatus = status
-				ev.attendeeStatus = status
+				ev.AttendeeStatus = status
 				break
 			}
 		}
@@ -359,43 +388,43 @@ func (m model) loadEvents() tea.Msg {
 		}
 
 		event := eventItem{Event: it}
-		event.start, err = time.Parse(time.RFC3339, it.Start.DateTime)
+		event.Start, err = time.Parse(time.RFC3339, it.Start.DateTime)
 		if err != nil {
 			log.Fatalf("%s: %v", it.Summary, err)
 		}
-		event.end, err = time.Parse(time.RFC3339, it.End.DateTime)
+		event.End, err = time.Parse(time.RFC3339, it.End.DateTime)
 		if err != nil {
 			log.Fatalf("%s: %v", it.Summary, err)
 		}
 
-		event.attendeeStatus = "unknown"
+		event.AttendeeStatus = "unknown"
 		for _, a := range it.Attendees {
 			if a.Self {
-				event.attendeeStatus = a.ResponseStatus
+				event.AttendeeStatus = a.ResponseStatus
 				break
 			}
 		}
-		if event.attendeeStatus == "unknown" && it.Creator.Self {
-			event.attendeeStatus = "accepted"
+		if event.AttendeeStatus == "unknown" && it.Creator.Self {
+			event.AttendeeStatus = "accepted"
 		}
 
 		events = append(events, &event)
 	}
 
 	for _, ev := range events {
-		if ev.isDeclined() {
+		if ev.Declined() {
 			continue
 		}
 		for _, ev2 := range events {
-			if ev2.isDeclined() {
+			if ev2.Declined() {
 				continue
 			}
 			if ev.Id == ev2.Id {
 				continue
 			}
 
-			if ev.intersectWith(ev2) {
-				ev.conflictsWith = append(ev.conflictsWith, ev2)
+			if ev.intersectsWith(ev2) {
+				ev.ConflictsWith = append(ev.ConflictsWith, ev2)
 			}
 		}
 	}
@@ -407,25 +436,70 @@ func (m model) loadEvents() tea.Msg {
 
 type eventItem struct {
 	*calendar.Event
-	start          time.Time
-	end            time.Time
-	attendeeStatus string
-	conflictsWith  []*eventItem
+	Start          time.Time
+	End            time.Time
+	AttendeeStatus string
+	ConflictsWith  []*eventItem
 }
 
 func (e *eventItem) FilterValue() string {
 	return e.Summary
 }
 
-func (e *eventItem) intersectWith(e2 *eventItem) bool {
-	return !(e.end.Unix() <= e2.start.Unix() || e2.end.Unix() <= e.start.Unix())
+func (e *eventItem) intersectsWith(e2 *eventItem) bool {
+	return !(e.End.Unix() <= e2.Start.Unix() || e2.End.Unix() <= e.Start.Unix())
 }
 
-func (e *eventItem) isDeclined() bool {
-	return e.attendeeStatus == "declined"
+func (e *eventItem) Accepted() bool {
+	return e.AttendeeStatus == "accepted"
+}
+
+func (e *eventItem) Declined() bool {
+	return e.AttendeeStatus == "declined"
+}
+
+func (e *eventItem) String() string {
+	return fmt.Sprintf("%s-%s %s",
+		e.Start.Format("15:04"),
+		e.End.Format("15:04"),
+		e.Summary,
+	)
 }
 
 var oauthClient *http.Client
+
+func parseDateArg(arg string, base time.Time) (time.Time, error) {
+	if arg == "" {
+		return base, nil
+	}
+	if arg[0] == '+' || arg[0] == '-' {
+		// Relative date: +1d, -2d
+		var sign int
+		if arg[0] == '+' {
+			sign = 1
+		} else {
+			sign = -1
+		}
+		var n int
+		var unit string
+		_, err := fmt.Sscanf(arg, "%d%s", &n, &unit)
+		if err != nil {
+			return base, fmt.Errorf("invalid relative date: %s", arg)
+		}
+		switch unit {
+		case "d":
+			return base.Add(time.Duration(sign*n) * day), nil
+		default:
+			return base, fmt.Errorf("unsupported unit: %s", unit)
+		}
+	}
+	// Absolute date: YYYY-mm-dd
+	t, err := time.Parse("2006-01-02", arg)
+	if err != nil {
+		return base, fmt.Errorf("invalid date: %s", arg)
+	}
+	return t, nil
+}
 
 func main() {
 	confDir, err := os.UserConfigDir()
@@ -434,7 +508,11 @@ func main() {
 	}
 
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
+	formatStr := ""
+	dateStr := ""
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
+	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
+	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -456,9 +534,92 @@ func main() {
 		log.Fatal(err)
 	}
 
-	prog := tea.NewProgram(initModel())
+	// Determine the date
+	base := today()
+	showDate, err := parseDateArg(dateStr, base)
+	if err != nil {
+		log.Fatalf("invalid --date: %v", err)
+	}
+
+	if formatStr != "" {
+		// Non-interactive: Template output
+		err := printEventsWithTemplate(formatStr, showDate)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	prog := tea.NewProgram(initModelWithDate(showDate))
 	err = prog.Start()
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func fetchTodayEvents() ([]*eventItem, error) {
+	return fetchEventsForDate(today())
+}
+
+func fetchEventsForDate(date time.Time) ([]*eventItem, error) {
+	ctx := context.Background()
+	client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
+	if err != nil {
+		return nil, err
+	}
+	eventsListResult, err := client.Events.List("primary").
+		ShowDeleted(false).
+		SingleEvents(true).
+		TimeMin(date.Format(time.RFC3339)).
+		TimeMax(date.Add(1 * day).Format(time.RFC3339)).
+		OrderBy("startTime").
+		Do()
+	if err != nil {
+		return nil, err
+	}
+	events := make([]*eventItem, 0, len(eventsListResult.Items))
+	for _, it := range eventsListResult.Items {
+		if it.Start.DateTime == "" || it.End.DateTime == "" {
+			continue
+		}
+		event := eventItem{Event: it}
+		event.Start, err = time.Parse(time.RFC3339, it.Start.DateTime)
+		if err != nil {
+			return nil, err
+		}
+		event.End, err = time.Parse(time.RFC3339, it.End.DateTime)
+		if err != nil {
+			return nil, err
+		}
+		event.AttendeeStatus = "unknown"
+		for _, a := range it.Attendees {
+			if a.Self {
+				event.AttendeeStatus = a.ResponseStatus
+				break
+			}
+		}
+		if event.AttendeeStatus == "unknown" && it.Creator.Self {
+			event.AttendeeStatus = "accepted"
+		}
+		events = append(events, &event)
+	}
+
+	// Detect conflicts
+	for _, ev := range events {
+		if ev.Declined() {
+			continue
+		}
+		for _, ev2 := range events {
+			if ev2.Declined() {
+				continue
+			}
+			if ev.Id == ev2.Id {
+				continue
+			}
+			if ev.intersectsWith(ev2) {
+				ev.ConflictsWith = append(ev.ConflictsWith, ev2)
+			}
+		}
+	}
+	return events, nil
 }
