@@ -64,10 +64,12 @@ type appKeyMap struct {
 	declineEvent  key.Binding
 	openInBrowser key.Binding
 	gotoToday     key.Binding
-	reload        key.Binding
-	nextDay       key.Binding
-	prevDay       key.Binding
-	jumpToDay     key.Binding
+	reload               key.Binding
+	nextDay              key.Binding
+	prevDay              key.Binding
+	nextDaySkipWeekend   key.Binding
+	prevDaySkipWeekend   key.Binding
+	jumpToDay            key.Binding
 }
 
 func (a appKeyMap) helpKeys() []key.Binding {
@@ -80,6 +82,8 @@ func (a appKeyMap) helpKeys() []key.Binding {
 		a.reload,
 		a.nextDay,
 		a.prevDay,
+		a.nextDaySkipWeekend,
+		a.prevDaySkipWeekend,
 		a.jumpToDay,
 	}
 }
@@ -116,6 +120,14 @@ var appKeys = &appKeyMap{
 	prevDay: key.NewBinding(
 		key.WithKeys("left"),
 		key.WithHelp("←", "prev day"),
+	),
+	nextDaySkipWeekend: key.NewBinding(
+		key.WithKeys("shift+right"),
+		key.WithHelp("shift+→", "next weekday"),
+	),
+	prevDaySkipWeekend: key.NewBinding(
+		key.WithKeys("shift+left"),
+		key.WithHelp("shift+←", "prev weekday"),
 	),
 	jumpToDay: key.NewBinding(
 		key.WithKeys("ctrl+t"),
@@ -301,10 +313,34 @@ func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, appKeys.reload):
 		return m.reloadEvents(m.date)
 
+	case key.Matches(msg, appKeys.nextDaySkipWeekend):
+		// Shift + Right Arrow: Skip weekends
+		nextDate := m.date.Add(+1 * day)
+		switch nextDate.Weekday() {
+		case time.Saturday:
+			nextDate = nextDate.Add(+2 * day)
+		case time.Sunday:
+			nextDate = nextDate.Add(+1 * day)
+		}
+		return m.reloadEvents(nextDate)
+
+	case key.Matches(msg, appKeys.prevDaySkipWeekend):
+		// Shift + Left Arrow: Skip weekends
+		prevDate := m.date.Add(-1 * day)
+		switch prevDate.Weekday() {
+		case time.Sunday:
+			prevDate = prevDate.Add(-2 * day)
+		case time.Saturday:
+			prevDate = prevDate.Add(-1 * day)
+		}
+		return m.reloadEvents(prevDate)
+
 	case key.Matches(msg, appKeys.nextDay):
+		// Right Arrow (no shift)
 		return m.reloadEvents(m.date.Add(+1 * day))
 
 	case key.Matches(msg, appKeys.prevDay):
+		// Left Arrow (no shift)
 		return m.reloadEvents(m.date.Add(-1 * day))
 
 	case key.Matches(msg, appKeys.jumpToDay):
