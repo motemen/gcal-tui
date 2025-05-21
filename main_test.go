@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key" // Ensure this import is present if key.Matches is used internally by handlers
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -47,28 +46,28 @@ func TestHandleDefaultModeKeyMsg_Navigation(t *testing.T) {
 		{
 			name: "Shift+Right from Fri (intended)",
 			initialDate: newDate(2024, time.March, 8), // Friday
-			keyMsg: tea.KeyMsg{Type: tea.KeyRight}, // No ModShift field available
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftRight}, 
 			expectedDate: newDate(2024, time.March, 11), // Expected Monday
 			isShiftTest: true, // Mark as a Shift test
 		},
 		{
 			name: "Shift+Right from Thu (intended)",
 			initialDate: newDate(2024, time.March, 7), // Thursday
-			keyMsg: tea.KeyMsg{Type: tea.KeyRight},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftRight},
 			expectedDate: newDate(2024, time.March, 8), // Expected Friday
 			isShiftTest: true,
 		},
 		{
 			name: "Shift+Right from Sat (intended)",
 			initialDate: newDate(2024, time.March, 9), // Saturday
-			keyMsg: tea.KeyMsg{Type: tea.KeyRight},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftRight},
 			expectedDate: newDate(2024, time.March, 11), // Expected Monday
 			isShiftTest: true,
 		},
 		{
 			name: "Shift+Right from Sun (intended)",
 			initialDate: newDate(2024, time.March, 10), // Sunday
-			keyMsg: tea.KeyMsg{Type: tea.KeyRight},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftRight},
 			expectedDate: newDate(2024, time.March, 11), // Expected Monday
 			isShiftTest: true,
 		},
@@ -77,28 +76,28 @@ func TestHandleDefaultModeKeyMsg_Navigation(t *testing.T) {
 		{
 			name: "Shift+Left from Mon (intended)",
 			initialDate: newDate(2024, time.March, 11), // Monday
-			keyMsg: tea.KeyMsg{Type: tea.KeyLeft},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftLeft},
 			expectedDate: newDate(2024, time.March, 8), // Expected Friday
 			isShiftTest: true,
 		},
 		{
 			name: "Shift+Left from Tue (intended)",
 			initialDate: newDate(2024, time.March, 12), // Tuesday
-			keyMsg: tea.KeyMsg{Type: tea.KeyLeft},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftLeft},
 			expectedDate: newDate(2024, time.March, 11), // Expected Monday
 			isShiftTest: true,
 		},
 		{
 			name: "Shift+Left from Sun (intended)",
 			initialDate: newDate(2024, time.March, 10), // Sunday
-			keyMsg: tea.KeyMsg{Type: tea.KeyLeft},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftLeft},
 			expectedDate: newDate(2024, time.March, 8), // Expected Friday
 			isShiftTest: true,
 		},
 		{
 			name: "Shift+Left from Sat (intended)",
 			initialDate: newDate(2024, time.March, 9), // Saturday
-			keyMsg: tea.KeyMsg{Type: tea.KeyLeft},
+			keyMsg: tea.KeyMsg{Type: tea.KeyShiftLeft},
 			expectedDate: newDate(2024, time.March, 8), // Expected Friday
 			isShiftTest: true,
 		},
