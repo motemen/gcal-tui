@@ -54,6 +54,15 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 
 	timeRange := ev.Start.Format("15:04") + "-" + ev.End.Format("15:04")
 
+	// Get existing note
+	note := ""
+	for _, attendee := range ev.Attendees {
+		if attendee.Self && attendee.Comment != "" {
+			note = " 📝"
+			break
+		}
+	}
+
 	conflicts := ""
 	conflictNames := make([]string, len(ev.ConflictsWith))
 	for i := range ev.ConflictsWith {
@@ -94,7 +103,7 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 			// title = s.SelectedTitle.Render(mark + " " + s.SelectedTitle.Copy().Border(lipgloss.Border{}).Padding(0).Render(ev.Summary))
 			title = s.SelectedTitle.Render(mark + " " + s.SelectedTitle.Inline(true).Render(ev.Summary))
 			// desc = s.SelectedDesc.Render(timeRange + " " + conflicts)
-			desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts))
+			desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts) + note)
 		}
 	} else {
 		if isFiltered {
@@ -120,9 +129,9 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 			if isConflicting {
 				// FIXME
 				// desc = s.Conflict.Copy().Padding(s.NormalDesc.GetPadding()).Render(timeRange + " " + conflicts)
-				desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts))
+				desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts) + note)
 			} else {
-				desc = s.NormalDesc.Render(timeRange + " " + conflicts)
+				desc = s.NormalDesc.Render(timeRange + " " + conflicts + note)
 			}
 		}
 	}
@@ -178,6 +187,9 @@ func (*eventsListDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 		case key.Matches(msg, appKeys.openInBrowser):
 			open.Start(ev.HtmlLink)
 			return m.NewStatusMessage("open " + ev.Summary + " in browser")
+			
+		case key.Matches(msg, appKeys.addNote):
+			return addNoteToEvent(ev.Id)
 		}
 	}
 
