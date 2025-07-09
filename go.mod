@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v0.11.0
 	github.com/charmbracelet/bubbletea v0.21.0
 	github.com/charmbracelet/lipgloss v0.5.0
+	github.com/dnaeon/go-vcr/v2 v2.3.0
 	github.com/motemen/go-nuts v0.0.0-20220604133202-348ca5c35272
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966
 	golang.org/x/oauth2 v0.0.0-20220524215830-622c5d57e401

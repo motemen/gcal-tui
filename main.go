@@ -12,6 +12,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dnaeon/go-vcr/v2/cassette"
+	"github.com/dnaeon/go-vcr/v2/recorder"
 	"github.com/motemen/go-nuts/oauth2util"
 	"golang.org/x/oauth2/google"
 
@@ -468,6 +470,46 @@ func (e *eventItem) String() string {
 
 var oauthClient *http.Client
 
+// createOAuth2Client creates an OAuth2 client, optionally wrapped with VCR for testing
+func createOAuth2Client(ctx context.Context, oauth2Config *oauth2util.Config, testMode bool, cassetteFile string) (*http.Client, error) {
+	baseClient, err := oauth2Config.CreateOAuth2Client(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !testMode {
+		return baseClient, nil
+	}
+
+	if cassetteFile == "" {
+		return nil, fmt.Errorf("cassette-file is required when test-mode is enabled")
+	}
+
+	// Create VCR recorder
+	rec, err := recorder.New(cassetteFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VCR recorder: %w", err)
+	}
+
+	// Add filters to remove sensitive information
+	rec.AddFilter(func(i *cassette.Interaction) error {
+		// Remove authorization headers
+		delete(i.Request.Headers, "Authorization")
+		delete(i.Response.Headers, "Authorization")
+		
+		// Remove other sensitive headers
+		delete(i.Request.Headers, "Cookie")
+		delete(i.Response.Headers, "Set-Cookie")
+		
+		return nil
+	})
+
+	// Wrap the OAuth2 client's transport with VCR
+	baseClient.Transport = rec
+
+	return baseClient, nil
+}
+
 func parseDateArg(arg string, base time.Time) (time.Time, error) {
 	if arg == "" {
 		return base, nil
@@ -510,9 +552,13 @@ func main() {
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
 	dateStr := ""
+	testMode := false
+	cassetteFile := ""
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
+	flag.BoolVar(&testMode, "test-mode", false, "Enable test mode with VCR recording/replay")
+	flag.StringVar(&cassetteFile, "cassette-file", "", "Path to VCR cassette file for test mode")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -526,10 +572,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	oauthClient, err = (&oauth2util.Config{
+	oauthClient, err = createOAuth2Client(context.Background(), &oauth2util.Config{
 		OAuth2Config: oauth2Config,
 		Name:         programName,
-	}).CreateOAuth2Client(context.Background())
+	}, testMode, cassetteFile)
 	if err != nil {
 		log.Fatal(err)
 	}
