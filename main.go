@@ -12,6 +12,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dnaeon/go-vcr/v2/recorder"
 	"github.com/motemen/go-nuts/oauth2util"
 	"golang.org/x/oauth2/google"
 
@@ -468,6 +469,53 @@ func (e *eventItem) String() string {
 
 var oauthClient *http.Client
 
+// createOAuth2Client creates an OAuth2 client, optionally wrapped with VCR for recording/replaying
+func createOAuth2Client(oauth2Config *oauth2util.Config, testMode bool, cassetteFile string) (*http.Client, error) {
+	// Create the base OAuth2 client
+	client, err := oauth2Config.CreateOAuth2Client(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	// If test mode is disabled, return the client as-is
+	if !testMode || cassetteFile == "" {
+		return client, nil
+	}
+
+	// Create VCR recorder for test mode
+	mode := recorder.ModeReplaying
+	if _, err := os.Stat(cassetteFile); os.IsNotExist(err) {
+		mode = recorder.ModeRecording
+	}
+
+	r, err := recorder.NewWithOptions(&recorder.Options{
+		CassetteName: cassetteFile,
+		Mode:         mode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VCR recorder: %w", err)
+	}
+
+	// Add security filters to remove sensitive headers
+	r.AddFilter(func(i *recorder.Interaction) error {
+		// Remove sensitive headers from requests
+		delete(i.Request.Headers, "Authorization")
+		delete(i.Request.Headers, "Cookie")
+		delete(i.Request.Headers, "X-Goog-Iap-Jwt-Assertion")
+		
+		// Remove sensitive headers from responses
+		delete(i.Response.Headers, "Set-Cookie")
+		delete(i.Response.Headers, "X-Goog-Iap-Jwt-Assertion")
+		
+		return nil
+	})
+
+	// Wrap the OAuth2 client with VCR
+	client.Transport = r
+
+	return client, nil
+}
+
 func parseDateArg(arg string, base time.Time) (time.Time, error) {
 	if arg == "" {
 		return base, nil
@@ -510,9 +558,13 @@ func main() {
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
 	dateStr := ""
+	testMode := false
+	cassetteFile := ""
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
+	flag.BoolVar(&testMode, "test-mode", false, "Enable VCR test mode for recording/replaying API calls")
+	flag.StringVar(&cassetteFile, "cassette-file", "", "Path to VCR cassette file for test mode")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -526,10 +578,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	oauthClient, err = (&oauth2util.Config{
+	oauthClient, err = createOAuth2Client(&oauth2util.Config{
 		OAuth2Config: oauth2Config,
 		Name:         programName,
-	}).CreateOAuth2Client(context.Background())
+	}, testMode, cassetteFile)
 	if err != nil {
 		log.Fatal(err)
 	}
