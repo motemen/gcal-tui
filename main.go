@@ -160,7 +160,7 @@ var styles = eventsListStyles{
 }
 
 func init() {
-	styles.DefaultItemStyles.SelectedTitle.
+	styles.DefaultItemStyles.SelectedTitle = styles.DefaultItemStyles.SelectedTitle.
 		Foreground(lipgloss.Color("#50CFFA")).BorderLeftForeground(lipgloss.Color("#50CFFA"))
 }
 
@@ -177,7 +177,7 @@ func initModelWithDate(date time.Time) model {
 	}
 
 	eventsList := list.New(nil, delegate, 0, 0)
-	eventsList.Styles.Title.Background(lipgloss.Color("#50CFFA"))
+	eventsList.Styles.Title = eventsList.Styles.Title.Background(lipgloss.Color("#50CFFA"))
 	eventsList.Title = date.Format("2006-01-02")
 	eventsList.SetSpinner(thinDotSpinner)
 	eventsList.SetShowStatusBar(false)
