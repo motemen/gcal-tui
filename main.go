@@ -306,6 +306,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.uiMode = uiModeDefault
 					return m.reloadEvents(date)
 				}
+			} else if msg.String() == "esc" {
+				m.uiMode = uiModeDefault
+				return m, nil
 			}
 			
 		case uiModeInputNote:
@@ -316,6 +319,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(
 						m.eventsList.StartSpinner(),
 						updateEventNote(selectedEvent, m.inputNote.Value()),
+					)
+				}
+			} else if msg.String() == "esc" {
+				m.uiMode = uiModeDefault
+				return m, nil
+			} else if msg.String() == "A" {
+				// Accept event and save note
+				selectedEvent, ok := m.eventsList.SelectedItem().(*eventItem)
+				if ok {
+					m.uiMode = uiModeDefault
+					return m, tea.Batch(
+						m.eventsList.StartSpinner(),
+						updateEventNote(selectedEvent, m.inputNote.Value()),
+						updateEventStatus(selectedEvent, "accepted"),
+					)
+				}
+			} else if msg.String() == "D" {
+				// Decline event and save note
+				selectedEvent, ok := m.eventsList.SelectedItem().(*eventItem)
+				if ok {
+					m.uiMode = uiModeDefault
+					return m, tea.Batch(
+						m.eventsList.StartSpinner(),
+						updateEventNote(selectedEvent, m.inputNote.Value()),
+						updateEventStatus(selectedEvent, "declined"),
 					)
 				}
 			}
