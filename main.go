@@ -12,6 +12,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dnaeon/go-vcr/v2/recorder"
 	"github.com/motemen/go-nuts/oauth2util"
 	"golang.org/x/oauth2/google"
 
@@ -468,6 +469,62 @@ func (e *eventItem) String() string {
 
 var oauthClient *http.Client
 
+// createOAuth2Client creates an OAuth2 client with optional VCR recording/replay
+func createOAuth2Client(ctx context.Context, oauth2Config *oauth2util.Config, testMode bool, cassetteFile string) (*http.Client, error) {
+	if !testMode {
+		// Normal mode - create OAuth2 client directly
+		return oauth2Config.CreateOAuth2Client(ctx)
+	}
+
+	// Test mode - wrap with VCR
+	var mode recorder.Mode
+	if _, err := os.Stat(cassetteFile); os.IsNotExist(err) {
+		// Cassette file doesn't exist - record mode
+		mode = recorder.ModeRecording
+	} else {
+		// Cassette file exists - replay mode
+		mode = recorder.ModeReplaying
+	}
+
+	// Create VCR recorder
+	r, err := recorder.New(cassetteFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VCR recorder: %w", err)
+	}
+	
+	// Set recorder mode
+	r.SetMode(mode)
+
+	// Filter out sensitive headers
+	r.AddFilter(func(i *recorder.Interaction) error {
+		delete(i.Request.Headers, "Authorization")
+		delete(i.Request.Headers, "Cookie")
+		delete(i.Response.Headers, "Set-Cookie")
+		return nil
+	})
+
+	if mode == recorder.ModeRecording {
+		// In recording mode, create OAuth2 client first, then wrap with VCR
+		if oauth2Config == nil {
+			return nil, fmt.Errorf("oauth2Config is required for recording mode")
+		}
+		realClient, err := oauth2Config.CreateOAuth2Client(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OAuth2 client: %w", err)
+		}
+		
+		// Wrap the OAuth2 client's transport with VCR
+		realClient.Transport = r
+		
+		return realClient, nil
+	} else {
+		// In replay mode, create a client with VCR transport
+		return &http.Client{
+			Transport: r,
+		}, nil
+	}
+}
+
 func parseDateArg(arg string, base time.Time) (time.Time, error) {
 	if arg == "" {
 		return base, nil
@@ -510,10 +567,31 @@ func main() {
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
 	dateStr := ""
+	testMode := false
+	cassetteFile := ""
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
+	flag.BoolVar(&testMode, "test-mode", false, "Enable test mode with VCR recording/replay")
+	flag.StringVar(&cassetteFile, "cassette-file", "", "`path` to VCR cassette file for recording/replay")
 	flag.Parse()
+
+	// Validate test mode flags
+	if testMode && cassetteFile == "" {
+		log.Fatal("--cassette-file is required when --test-mode is enabled")
+	}
+
+	// In test mode replay, skip credentials validation if cassette file exists
+	if testMode && cassetteFile != "" {
+		if _, err := os.Stat(cassetteFile); err == nil {
+			// Cassette file exists - replay mode, create client without credentials
+			oauthClient, err = createOAuth2Client(context.Background(), nil, testMode, cassetteFile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			goto skipCredentials
+		}
+	}
 
 	b, err := os.ReadFile(credentialsFile)
 	if err != nil {
@@ -526,13 +604,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	oauthClient, err = (&oauth2util.Config{
+	oauthClient, err = createOAuth2Client(context.Background(), &oauth2util.Config{
 		OAuth2Config: oauth2Config,
 		Name:         programName,
-	}).CreateOAuth2Client(context.Background())
+	}, testMode, cassetteFile)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+skipCredentials:
 
 	// Determine the date
 	base := today()
