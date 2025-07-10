@@ -13,6 +13,7 @@ import (
 
 type eventsListStyles struct {
 	list.DefaultItemStyles
+
 	Accepted    lipgloss.Style
 	Declined    lipgloss.Style
 	NeedsAction lipgloss.Style
