@@ -179,6 +179,10 @@ func (*eventsListDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 		case key.Matches(msg, appKeys.openInBrowser):
 			open.Start(ev.HtmlLink)
 			return m.NewStatusMessage("open " + ev.Summary + " in browser")
+		
+		case key.Matches(msg, appKeys.addNote):
+			// This should be handled by the main Update method
+			return nil
 		}
 	}
 
