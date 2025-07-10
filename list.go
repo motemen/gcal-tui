@@ -62,11 +62,6 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 	if len(conflictNames) > 0 {
 		conflicts = "!"
 	}
-	
-	noteIndicator := ""
-	if ev.HasNote() {
-		noteIndicator = "📝"
-	}
 
 	if m.Width() <= 0 {
 		// short-circuit
@@ -99,7 +94,7 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 			// title = s.SelectedTitle.Render(mark + " " + s.SelectedTitle.Copy().Border(lipgloss.Border{}).Padding(0).Render(ev.Summary))
 			title = s.SelectedTitle.Render(mark + " " + s.SelectedTitle.Inline(true).Render(ev.Summary))
 			// desc = s.SelectedDesc.Render(timeRange + " " + conflicts)
-			desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts) + " " + noteIndicator)
+			desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts))
 		}
 	} else {
 		if isFiltered {
@@ -125,9 +120,9 @@ func (d *eventsListDelegate) Render(w io.Writer, m list.Model, index int, item l
 			if isConflicting {
 				// FIXME
 				// desc = s.Conflict.Copy().Padding(s.NormalDesc.GetPadding()).Render(timeRange + " " + conflicts)
-				desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts) + " " + noteIndicator)
+				desc = s.NormalDesc.Render(timeRange + " " + s.Conflict.Inline(true).Render(conflicts))
 			} else {
-				desc = s.NormalDesc.Render(timeRange + " " + conflicts + " " + noteIndicator)
+				desc = s.NormalDesc.Render(timeRange + " " + conflicts)
 			}
 		}
 	}
