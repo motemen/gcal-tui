@@ -58,11 +58,11 @@ func printEventsTimeline(date time.Time) error {
 		nameWidth = 4
 	}
 
-	// Time label column width: "  10:00-11:00  ⚡" => ~18
-	const timeLabelWidth = 18
+	// Time label column width: "  10:00-11:00" => ~15
+	const timeLabelWidth = 15
 
-	// Bar width = remaining
-	barWidth := termWidth - nameWidth - 2 - timeLabelWidth // 2 for spacing around bar
+	// Bar width = remaining (1 for conflict mark, 2 for spacing around bar)
+	barWidth := termWidth - 1 - nameWidth - 2 - timeLabelWidth
 	if barWidth < 10 {
 		barWidth = 10
 	}
@@ -161,7 +161,7 @@ func printTimeAxis(nameWidth, barWidth int, minTime, maxTime time.Time) {
 		t = t.Add(time.Hour)
 	}
 
-	padding := strings.Repeat(" ", nameWidth+2)
+	padding := strings.Repeat(" ", nameWidth+3) // 1(conflict mark) + nameWidth + 2(spacing)
 	fmt.Printf("%s%s\n", padding, string(labelSlots))
 	fmt.Printf("%s%s\n", padding, strings.Join(tickRunes, ""))
 }
@@ -232,10 +232,10 @@ func printEventBar(ev *eventItem, nameWidth, barWidth int, minTime, maxTime time
 		timeLabel = ev.Start.Format("15:04") + "-" + ev.End.Format("15:04")
 	}
 
-	// Conflict marker
-	conflictMark := ""
-	if len(ev.ConflictsWith) > 0 {
-		conflictMark = "  ⚡"
+	// Conflict marker (left side)
+	conflictMark := " "
+	if len(ev.ConflictsWith) > 0 && !ev.Declined() {
+		conflictMark = timelineConflictStyle.Render("!")
 	}
 
 	// Style the output
@@ -248,7 +248,7 @@ func printEventBar(ev *eventItem, nameWidth, barWidth int, minTime, maxTime time
 	} else if len(ev.ConflictsWith) > 0 {
 		nameStyled = timelineConflictStyle.Render(namePadded)
 		barStyled = timelineConflictStyle.Render(barStr)
-		timeLabelStyled = timelineConflictStyle.Render(timeLabel + conflictMark)
+		timeLabelStyled = timelineConflictStyle.Render(timeLabel)
 	} else if ev.Accepted() {
 		nameStyled = timelineAcceptedStyle.Render(namePadded)
 		barStyled = timelineAcceptedStyle.Render(barStr)
@@ -259,7 +259,7 @@ func printEventBar(ev *eventItem, nameWidth, barWidth int, minTime, maxTime time
 		timeLabelStyled = timelineBarStyle.Render(timeLabel)
 	}
 
-	fmt.Printf(" %s  %s  %s\n", nameStyled, barStyled, timeLabelStyled)
+	fmt.Printf("%s%s  %s  %s\n", conflictMark, nameStyled, barStyled, timeLabelStyled)
 }
 
 func truncateString(s string, maxWidth int) string {
