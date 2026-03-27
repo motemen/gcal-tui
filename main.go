@@ -466,6 +466,27 @@ func (e *eventItem) String() string {
 	)
 }
 
+// timelineFlag can be used as -timeline (bool, defaults to "auto")
+// or -timeline 09-18 (with a value).
+type timelineFlag struct {
+	set   bool
+	value string
+}
+
+func (f *timelineFlag) String() string { return f.value }
+
+func (f *timelineFlag) Set(val string) error {
+	f.set = true
+	if val == "true" || val == "" {
+		f.value = "auto"
+	} else {
+		f.value = val
+	}
+	return nil
+}
+
+func (f *timelineFlag) IsBoolFlag() bool { return true }
+
 var oauthClient *http.Client
 
 func parseDateArg(arg string, base time.Time) (time.Time, error) {
@@ -510,11 +531,11 @@ func main() {
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
 	dateStr := ""
-	timelineRange := ""
+	var timeline timelineFlag
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
-	flag.StringVar(&timelineRange, "timeline", "", "Print daily schedule as timeline (`auto` or `HH-HH`, e.g. 09-18)")
+	flag.Var(&timeline, "timeline", "Print daily schedule as timeline (or specify `HH-HH` range, e.g. 09-18)")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -543,8 +564,8 @@ func main() {
 		log.Fatalf("invalid --date: %v", err)
 	}
 
-	if timelineRange != "" {
-		err := printEventsTimeline(showDate, timelineRange)
+	if timeline.set {
+		err := printEventsTimeline(showDate, timeline.value)
 		if err != nil {
 			log.Fatal(err)
 		}
