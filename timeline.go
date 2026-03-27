@@ -20,7 +20,7 @@ var (
 	timelineDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 )
 
-func printEventsTimeline(date time.Time) error {
+func printEventsTimeline(date time.Time, rangeSpec string) error {
 	events, err := fetchEventsForDate(date)
 	if err != nil {
 		return err
@@ -34,7 +34,10 @@ func printEventsTimeline(date time.Time) error {
 	}
 
 	// Determine time range
-	minTime, maxTime := timeRange(events)
+	minTime, maxTime, err := resolveTimeRange(date, events, rangeSpec)
+	if err != nil {
+		return err
+	}
 
 	// Terminal width
 	termWidth := 80
@@ -86,7 +89,25 @@ func jaWeekday(w time.Weekday) string {
 	return names[w]
 }
 
-func timeRange(events []*eventItem) (minTime, maxTime time.Time) {
+// resolveTimeRange determines the display time range for the timeline.
+// rangeSpec is "auto" (auto-detect with 30min margin) or "HH-HH" (e.g. "09-18").
+func resolveTimeRange(date time.Time, events []*eventItem, rangeSpec string) (minTime, maxTime time.Time, err error) {
+	if rangeSpec != "auto" {
+		var fromHour, toHour int
+		if _, err := fmt.Sscanf(rangeSpec, "%d-%d", &fromHour, &toHour); err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid timeline range %q: expected \"auto\" or \"HH-HH\" (e.g. 09-18)", rangeSpec)
+		}
+		if fromHour < 0 || fromHour > 23 || toHour < 0 || toHour > 24 || fromHour >= toHour {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid timeline range %q: hours must satisfy 0 <= from < to <= 24", rangeSpec)
+		}
+		loc := date.Location()
+		y, m, d := date.Date()
+		minTime = time.Date(y, m, d, fromHour, 0, 0, 0, loc)
+		maxTime = time.Date(y, m, d, toHour, 0, 0, 0, loc)
+		return minTime, maxTime, nil
+	}
+
+	// Auto: derive from events with 30min margin, rounded to hour
 	minTime = events[0].Start
 	maxTime = events[0].End
 
@@ -99,8 +120,9 @@ func timeRange(events []*eventItem) (minTime, maxTime time.Time) {
 		}
 	}
 
-	// Round down to hour for minTime, round up for maxTime
-	minTime = minTime.Truncate(time.Hour)
+	// Add 30min margin, then round to hour boundaries
+	minTime = minTime.Add(-30 * time.Minute).Truncate(time.Hour)
+	maxTime = maxTime.Add(30 * time.Minute)
 	if maxTime.Truncate(time.Hour) != maxTime {
 		maxTime = maxTime.Truncate(time.Hour).Add(time.Hour)
 	}
@@ -110,7 +132,7 @@ func timeRange(events []*eventItem) (minTime, maxTime time.Time) {
 		maxTime = minTime.Add(time.Hour)
 	}
 
-	return
+	return minTime, maxTime, nil
 }
 
 func timeToPos(t, minTime, maxTime time.Time, barWidth int) int {
