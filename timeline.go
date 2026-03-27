@@ -246,9 +246,9 @@ func printEventBar(ev *eventItem, nameWidth, barWidth int, minTime, maxTime time
 
 	barStr := strings.Join(bar, "")
 
-	// Time label
+	// Time label (based on actual duration, not display width)
 	var timeLabel string
-	if ev.Start.Equal(ev.End) || isShort {
+	if ev.Start.Equal(ev.End) {
 		timeLabel = ev.Start.Format("15:04")
 	} else {
 		timeLabel = ev.Start.Format("15:04") + "-" + ev.End.Format("15:04")
