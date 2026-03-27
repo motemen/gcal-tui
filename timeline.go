@@ -268,18 +268,15 @@ func truncateString(s string, maxWidth int) string {
 		return s
 	}
 
-	ellipsis := "…"
-	ellipsisWidth := runewidth.StringWidth(ellipsis)
-
 	result := ""
 	currentWidth := 0
 	for _, r := range s {
 		rw := runewidth.RuneWidth(r)
-		if currentWidth+rw > maxWidth-ellipsisWidth {
+		if currentWidth+rw > maxWidth-2 { // 2 for ".."
 			break
 		}
 		result += string(r)
 		currentWidth += rw
 	}
-	return result + ellipsis
+	return result + ".."
 }
