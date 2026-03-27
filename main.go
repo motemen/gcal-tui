@@ -510,9 +510,11 @@ func main() {
 	credentialsFile := filepath.Join(confDir, programName, "credentials.json")
 	formatStr := ""
 	dateStr := ""
+	timelineMode := false
 	flag.StringVar(&credentialsFile, "credentials", credentialsFile, "`path` to credentials.json")
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
+	flag.BoolVar(&timelineMode, "timeline", false, "Print daily schedule as timeline and exit")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -539,6 +541,14 @@ func main() {
 	showDate, err := parseDateArg(dateStr, base)
 	if err != nil {
 		log.Fatalf("invalid --date: %v", err)
+	}
+
+	if timelineMode {
+		err := printEventsTimeline(showDate)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 
 	if formatStr != "" {
