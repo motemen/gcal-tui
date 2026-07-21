@@ -58,6 +58,10 @@ const programName = "gcal-tui"
 
 var day = 24 * time.Hour
 
+// showDeclined controls whether declined events are included in fetched results.
+// Declined events are hidden by default; set via the -include-declined flag.
+var showDeclined bool
+
 type appKeyMap struct {
 	nextEvent     key.Binding
 	acceptEvent   key.Binding
@@ -407,6 +411,9 @@ func (m model) loadEvents() tea.Msg {
 		if event.AttendeeStatus == "unknown" && it.Creator.Self {
 			event.AttendeeStatus = "accepted"
 		}
+		if !showDeclined && event.Declined() {
+			continue
+		}
 
 		events = append(events, &event)
 	}
@@ -536,6 +543,7 @@ func main() {
 	flag.StringVar(&formatStr, "format", "", "Go template for event output (non-interactive mode)")
 	flag.StringVar(&dateStr, "date", "", "Date to show (YYYY-mm-dd or +1d/-1d)")
 	flag.Var(&timeline, "timeline", "Print daily schedule as timeline (or specify `HH-HH` range, e.g. 09-18)")
+	flag.BoolVar(&showDeclined, "include-declined", false, "Show declined events (hidden by default)")
 	flag.Parse()
 
 	b, err := os.ReadFile(credentialsFile)
@@ -631,6 +639,9 @@ func fetchEventsForDate(date time.Time) ([]*eventItem, error) {
 		}
 		if event.AttendeeStatus == "unknown" && it.Creator.Self {
 			event.AttendeeStatus = "accepted"
+		}
+		if !showDeclined && event.Declined() {
+			continue
 		}
 		events = append(events, &event)
 	}
