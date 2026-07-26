@@ -72,6 +72,7 @@ type appKeyMap struct {
 	nextDay       key.Binding
 	prevDay       key.Binding
 	jumpToDay     key.Binding
+	addNote       key.Binding
 }
 
 func (a appKeyMap) helpKeys() []key.Binding {
@@ -85,6 +86,7 @@ func (a appKeyMap) helpKeys() []key.Binding {
 		a.nextDay,
 		a.prevDay,
 		a.jumpToDay,
+		a.addNote,
 	}
 }
 
@@ -125,6 +127,10 @@ var appKeys = &appKeyMap{
 		key.WithKeys("ctrl+t"),
 		key.WithHelp("ctrl+t", "jump to day"),
 	),
+	addNote: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "add note"),
+	),
 }
 
 type model struct {
@@ -137,6 +143,9 @@ type model struct {
 	// Day view
 	inputDate textinput.Model
 
+	// Note input
+	inputNote textinput.Model
+
 	uiMode uiMode
 
 	errorMessage string
@@ -147,6 +156,7 @@ type uiMode int
 const (
 	uiModeDefault uiMode = iota
 	uiModeInputDate
+	uiModeInputNote
 )
 
 var thinDotSpinner = spinner.Spinner{
@@ -196,10 +206,16 @@ func initModelWithDate(date time.Time) model {
 	t.CharLimit = 10
 	t.Width = 15
 
+	noteInput := textinput.New()
+	noteInput.Placeholder = "Add a note..."
+	noteInput.CharLimit = 500
+	noteInput.Width = 50
+
 	return model{
 		date:       date,
 		eventsList: eventsList,
 		inputDate:  t,
+		inputNote:  noteInput,
 	}
 }
 
@@ -217,6 +233,28 @@ func (m model) enterJumpToDayMode() (model, tea.Cmd) {
 	m.errorMessage = ""
 	m.uiMode = uiModeInputDate
 	m.inputDate.SetValue(m.date.Format("2006-01-02"))
+	return m, textinput.Blink
+}
+
+func (m model) enterNoteMode() (model, tea.Cmd) {
+	m.errorMessage = ""
+	m.uiMode = uiModeInputNote
+	
+	// Get the current note for the selected event
+	selectedEvent, ok := m.eventsList.SelectedItem().(*eventItem)
+	if ok {
+		currentNote := ""
+		// Find the current user's attendee and get their comment
+		for _, attendee := range selectedEvent.Attendees {
+			if attendee.Self {
+				currentNote = attendee.Comment
+				break
+			}
+		}
+		m.inputNote.SetValue(currentNote)
+	}
+	
+	m.inputNote.Focus()
 	return m, textinput.Blink
 }
 
@@ -272,6 +310,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.uiMode = uiModeDefault
 					return m.reloadEvents(date)
 				}
+			} else if msg.String() == "esc" {
+				m.uiMode = uiModeDefault
+				return m, nil
+			}
+			
+		case uiModeInputNote:
+			if msg.String() == "enter" {
+				selectedEvent, ok := m.eventsList.SelectedItem().(*eventItem)
+				if ok {
+					m.uiMode = uiModeDefault
+					return m, tea.Batch(
+						m.eventsList.StartSpinner(),
+						updateEventNote(selectedEvent, m.inputNote.Value()),
+					)
+				}
+			} else if msg.String() == "esc" {
+				m.uiMode = uiModeDefault
+				return m, nil
 			}
 		}
 	}
@@ -286,6 +342,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case uiModeInputDate:
 		m.inputDate, cmd = m.inputDate.Update(msg)
+		cmds = append(cmds, cmd)
+		
+	case uiModeInputNote:
+		m.inputNote, cmd = m.inputNote.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -313,6 +373,9 @@ func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, appKeys.jumpToDay):
 		return m.enterJumpToDayMode()
+		
+	case key.Matches(msg, appKeys.addNote):
+		return m.enterNoteMode()
 	}
 
 	return m, nil
@@ -321,6 +384,10 @@ func (m model) handleDefaultModeKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.uiMode == uiModeInputDate {
 		return appStyle.Render("Date: " + m.inputDate.View())
+	}
+	
+	if m.uiMode == uiModeInputNote {
+		return appStyle.Render("Note: " + m.inputNote.View())
 	}
 
 	return appStyle.Render(m.eventsList.View())
@@ -360,6 +427,34 @@ func updateEventStatus(ev *eventItem, status string) tea.Cmd {
 		}).Do()
 		if err != nil {
 			log.Fatalf("%#v", err)
+		}
+
+		return eventUpdatedMsg{rawEvent: rawEv}
+	}
+}
+
+func updateEventNote(ev *eventItem, note string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		client, err := calendar.NewService(ctx, option.WithHTTPClient(oauthClient))
+		if err != nil {
+			return nonFatalErrorMsg{errorMessage: "Unable to retrieve Calendar client"}
+		}
+
+		// Update the attendee comment
+		for _, a := range ev.Attendees {
+			if a.Self {
+				a.Comment = note
+				break
+			}
+		}
+
+		rawEv, err := client.Events.Patch("primary", ev.Id, &calendar.Event{
+			Attendees: ev.Attendees,
+		}).Do()
+		if err != nil {
+			return nonFatalErrorMsg{errorMessage: "Failed to update event note"}
 		}
 
 		return eventUpdatedMsg{rawEvent: rawEv}
@@ -463,6 +558,15 @@ func (e *eventItem) Accepted() bool {
 
 func (e *eventItem) Declined() bool {
 	return e.AttendeeStatus == "declined"
+}
+
+func (e *eventItem) HasNote() bool {
+	for _, attendee := range e.Attendees {
+		if attendee.Self && attendee.Comment != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *eventItem) String() string {
